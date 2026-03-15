@@ -1,0 +1,168 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}
+    // Document ID: userId
+    // Fields:
+    //   - uid: string (required)
+    //   - displayName: string (optional, max 100)
+    //   - email: string (required, valid email)
+    //   - character: map (optional)
+    //     - name: string (max 100)
+    //     - age: number
+    //     - quirk: string (max 500)
+    //     - background: string (max 2000)
+    //     - occupation: string (max 100)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: users/{userId}/messages/{messageId}
+    // Fields:
+    //   - role: string (required, 'user' | 'model' | 'system')
+    //   - content: string (required, max 10000)
+    //   - timestamp: timestamp (required, immutable)
+    //
+    // Collection: users/{userId}/npcs/{npcId}
+    // Fields:
+    //   - name: string (required, max 100)
+    //   - age: number (optional)
+    //   - nationality: string (optional, max 100)
+    //   - occupation: string (optional, max 100)
+    //   - background: string (optional, max 5000)
+    //   - personality: string (optional, max 5000)
+    //   - quirk: string (optional, max 5000)
+    //   - relationships: string (optional, max 5000)
+    //   - currentSituation: string (optional, max 5000)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: users/{userId}/events/{eventId}
+    // Fields:
+    //   - title: string (required, max 200)
+    //   - description: string (required, max 5000)
+    //   - scale: string (required, 'minor' | 'medium' | 'major')
+    //   - status: string (required, 'active' | 'resolved')
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function uidUnchanged() {
+      return !request.resource.data.keys().hasAll(['uid']) || request.resource.data.uid == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !request.resource.data.keys().hasAll(['uid']) || request.resource.data.uid == resource.data.uid;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+             request.resource.data[field].size() >= minLen &&
+             request.resource.data[field].size() <= maxLen;
+    }
+    
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !request.resource.data.keys().hasAll([field]) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+    
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidMessage() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['role', 'content', 'timestamp']) &&
+             data.role in ['user', 'model', 'system'] &&
+             data.content is string &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidNPC() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['name', 'createdAt', 'updatedAt']) &&
+             data.name is string &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidEvent() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['title', 'description', 'scale', 'status', 'createdAt', 'updatedAt']) &&
+             data.title is string &&
+             data.description is string &&
+             data.scale in ['minor', 'medium', 'major'] &&
+             data.status in ['active', 'resolved'] &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser() && uidUnchanged();
+      allow update: if isOwner(userId) && isValidUser() && uidNotModified() && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false; // Prevent accidental deletion
+
+      match /messages/{messageId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidMessage();
+        allow update: if false; // Messages should be immutable
+        allow delete: if false;
+      }
+
+      match /npcs/{npcId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidNPC();
+        allow update: if isOwner(userId) && isValidNPC() && request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if isOwner(userId);
+      }
+
+      match /events/{eventId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidEvent();
+        allow update: if isOwner(userId) && isValidEvent() && request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
